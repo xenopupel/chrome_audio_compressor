@@ -1,6 +1,6 @@
 let sharedCtx = null;
 let workletLoaded = false;
-const processedElements = new WeakMap();
+const processedElements = new Map();
 
 const DEFAULT_STATE = {
   enabled: false,
@@ -125,10 +125,14 @@ const observer = new MutationObserver((mutations) => {
 observer.observe(document.documentElement, { childList: true, subtree: true });
 
 // Load persisted state, then scan
+// Always scan regardless of whether background responds (MV3 service worker may be terminated)
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
+  if (chrome.runtime.lastError) { /* service worker not ready yet, use defaults */ }
   if (response?.payload) currentState = response.payload;
   scanAndHook();
 });
+// Fallback: scan immediately so elements added before the response are caught
+scanAndHook();
 
 // Handle updates from popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
