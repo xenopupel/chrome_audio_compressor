@@ -142,6 +142,34 @@ details[open] summary::before { transform: rotate(90deg); }
   font-variant-numeric: tabular-nums;
 }
 
+/* Threshold cell: stacks value + Auto checkbox vertically */
+.threshold-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.auto-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #666;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auto-label input[type="checkbox"] {
+  width: 11px;
+  height: 11px;
+  accent-color: #2563eb;
+  cursor: pointer;
+  margin: 0;
+}
+
+.auto-label input[type="checkbox"]:checked + span { color: #2563eb; }
+
 /* Status bar */
 .status {
   font-size: 11px;

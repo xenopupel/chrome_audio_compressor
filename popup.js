@@ -1,7 +1,8 @@
+// Presets now use margin (dB above floor) instead of absolute threshold
 const PRESETS = {
-  soft:       { threshold: -24, ratio: 2,   attack: 80,  release: 500, makeup: 2, knee: 6 },
-  medium:     { threshold: -18, ratio: 3,   attack: 50,  release: 300, makeup: 4, knee: 6 },
-  aggressive: { threshold: -12, ratio: 6,   attack: 20,  release: 150, makeup: 8, knee: 6 },
+  soft:       { margin: 12, ratio: 2, attack: 80,  release: 500, makeup: 2, knee: 6 },
+  medium:     { margin: 8,  ratio: 3, attack: 50,  release: 300, makeup: 4, knee: 6 },
+  aggressive: { margin: 4,  ratio: 6, attack: 20,  release: 150, makeup: 8, knee: 6 },
 };
 
 function lerp(a, b, t) {
@@ -30,9 +31,11 @@ const intensitySlider = document.getElementById('intensity-slider');
 const intensityLbl    = document.getElementById('intensity-label');
 const statusBar       = document.getElementById('status-bar');
 const controlsSection = document.getElementById('controls-section');
+const adaptiveToggle  = document.getElementById('adaptive-toggle');
+const thresholdInput  = document.getElementById('threshold');
 
 const advancedInputs = {
-  threshold: document.getElementById('threshold'),
+  threshold: thresholdInput,
   ratio:     document.getElementById('ratio'),
   attack:    document.getElementById('attack'),
   release:   document.getElementById('release'),
@@ -47,39 +50,64 @@ const advancedLabels = {
 };
 
 let state = {
-  enabled: false,
+  enabled:   false,
   intensity: 50,
+  adaptive:  true,
+  margin:    8,
   threshold: -18,
-  ratio: 3,
-  attack: 50,
-  release: 300,
-  makeup: 4,
-  knee: 6,
+  ratio:     3,
+  attack:    50,
+  release:   300,
+  makeup:    4,
+  knee:      6,
 };
 
-let advancedOpen = false; // tracks whether user manually edited advanced params
+let advancedOpen  = false;
+let latestFloorDb = null;
+
+// ─── Display helpers ─────────────────────────────────────────────────────────
+
+function updateThresholdDisplay() {
+  if (state.adaptive) {
+    const effective = latestFloorDb != null
+      ? Math.round(latestFloorDb + state.margin)
+      : '?';
+    advancedLabels.threshold.textContent = `Auto: ${effective} dB`;
+    thresholdInput.disabled = true;
+    thresholdInput.style.opacity = '0.35';
+  } else {
+    advancedLabels.threshold.textContent =
+      `${parseFloat(thresholdInput.value).toFixed(1)} dB`;
+    thresholdInput.disabled = false;
+    thresholdInput.style.opacity = '';
+  }
+}
 
 function updateAdvancedLabels() {
-  advancedLabels.threshold.textContent = `${parseFloat(advancedInputs.threshold.value).toFixed(1)} dB`;
-  advancedLabels.ratio.textContent     = `${parseFloat(advancedInputs.ratio.value).toFixed(1)} : 1`;
-  advancedLabels.attack.textContent    = `${advancedInputs.attack.value} ms`;
-  advancedLabels.release.textContent   = `${advancedInputs.release.value} ms`;
-  advancedLabels.makeup.textContent    = `+${parseFloat(advancedInputs.makeup.value).toFixed(1)} dB`;
+  updateThresholdDisplay();
+  advancedLabels.ratio.textContent   = `${parseFloat(advancedInputs.ratio.value).toFixed(1)} : 1`;
+  advancedLabels.attack.textContent  = `${advancedInputs.attack.value} ms`;
+  advancedLabels.release.textContent = `${advancedInputs.release.value} ms`;
+  advancedLabels.makeup.textContent  = `+${parseFloat(advancedInputs.makeup.value).toFixed(1)} dB`;
 }
 
 function syncAdvancedInputs(params) {
-  advancedInputs.threshold.value = params.threshold;
-  advancedInputs.ratio.value     = params.ratio;
-  advancedInputs.attack.value    = params.attack;
-  advancedInputs.release.value   = params.release;
-  advancedInputs.makeup.value    = params.makeup;
+  if (!state.adaptive && params.threshold != null) {
+    advancedInputs.threshold.value = params.threshold;
+  }
+  advancedInputs.ratio.value   = params.ratio;
+  advancedInputs.attack.value  = params.attack;
+  advancedInputs.release.value = params.release;
+  advancedInputs.makeup.value  = params.makeup;
   updateAdvancedLabels();
 }
 
 function buildPayload() {
   return {
     enabled:   state.enabled,
-    threshold: parseFloat(advancedInputs.threshold.value),
+    adaptive:  state.adaptive,
+    margin:    state.margin,
+    threshold: parseFloat(thresholdInput.value), // used only when adaptive=false
     ratio:     parseFloat(advancedInputs.ratio.value),
     attack:    parseInt(advancedInputs.attack.value, 10),
     release:   parseInt(advancedInputs.release.value, 10),
@@ -88,18 +116,29 @@ function buildPayload() {
   };
 }
 
+// ─── Broadcast ───────────────────────────────────────────────────────────────
+
 async function broadcast() {
   const payload = buildPayload();
-  await chrome.storage.local.set({ compressorState: payload, compressorIntensity: state.intensity });
+  await chrome.storage.local.set({
+    compressorState:     payload,
+    compressorIntensity: state.intensity,
+  });
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
 
   chrome.tabs.sendMessage(tab.id, { type: 'COMPRESSOR_UPDATE', payload }, (response) => {
-    if (chrome.runtime.lastError) return; // tab has no content script (chrome:// etc.)
+    if (chrome.runtime.lastError) return;
+    if (response?.floorDb != null) {
+      latestFloorDb = response.floorDb;
+      updateThresholdDisplay();
+    }
     if (response?.count != null) updateStatus(response.count, state.enabled);
   });
 }
+
+// ─── Status bar ──────────────────────────────────────────────────────────────
 
 function updateStatus(count, enabled) {
   if (!enabled) {
@@ -118,7 +157,7 @@ function setControlsEnabled(enabled) {
   controlsSection.classList.toggle('disabled', !enabled);
 }
 
-// --- Event handlers ---
+// ─── Event handlers ──────────────────────────────────────────────────────────
 
 enableToggle.addEventListener('change', () => {
   state.enabled = enableToggle.checked;
@@ -129,16 +168,29 @@ enableToggle.addEventListener('change', () => {
 intensitySlider.addEventListener('input', () => {
   state.intensity = parseInt(intensitySlider.value, 10);
   intensityLbl.textContent = intensityLabel(state.intensity);
+  const params = intensityToParams(state.intensity);
+  state.margin = params.margin;
   if (!advancedOpen) {
-    const params = intensityToParams(state.intensity);
     state = { ...state, ...params };
     syncAdvancedInputs(params);
+  } else {
+    updateThresholdDisplay();
   }
+  broadcast();
+});
+
+adaptiveToggle.addEventListener('change', () => {
+  state.adaptive = adaptiveToggle.checked;
+  updateThresholdDisplay();
   broadcast();
 });
 
 for (const [key, input] of Object.entries(advancedInputs)) {
   input.addEventListener('input', () => {
+    if (key === 'threshold') {
+      // Manual edit only applies when adaptive is off
+      if (state.adaptive) return;
+    }
     advancedOpen = true;
     updateAdvancedLabels();
     broadcast();
@@ -149,20 +201,23 @@ document.getElementById('advanced').addEventListener('toggle', (e) => {
   if (e.target.open) advancedOpen = true;
 });
 
-// --- Init ---
+// ─── Init ────────────────────────────────────────────────────────────────────
 
 async function init() {
   const stored = await chrome.storage.local.get(['compressorState', 'compressorIntensity']);
-  const s = stored.compressorState;
+  const s         = stored.compressorState;
   const intensity = stored.compressorIntensity ?? 50;
 
   if (s) {
-    state.enabled   = s.enabled ?? false;
-    state.knee      = s.knee ?? 6;
+    state.enabled   = s.enabled   ?? false;
+    state.knee      = s.knee      ?? 6;
+    state.adaptive  = s.adaptive  ?? true;
+    state.margin    = s.margin    ?? 8;
     state.intensity = intensity;
 
-    enableToggle.checked = state.enabled;
-    intensitySlider.value = intensity;
+    enableToggle.checked   = state.enabled;
+    adaptiveToggle.checked = state.adaptive;
+    intensitySlider.value  = intensity;
     intensityLbl.textContent = intensityLabel(intensity);
 
     syncAdvancedInputs({
@@ -176,13 +231,16 @@ async function init() {
 
   setControlsEnabled(state.enabled);
 
-  // Query current element count from content script
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
     chrome.tabs.sendMessage(tab.id, { type: 'GET_COUNT' }, (response) => {
       if (chrome.runtime.lastError) {
         updateStatus(0, state.enabled);
         return;
+      }
+      if (response?.floorDb != null) {
+        latestFloorDb = response.floorDb;
+        updateThresholdDisplay();
       }
       updateStatus(response?.count ?? 0, state.enabled);
     });

@@ -10,9 +10,12 @@ const DEFAULT_STATE = {
   release: 300,
   makeup: 4,
   knee: 6,
+  margin: 8,
+  adaptive: true,
 };
 
 let currentState = { ...DEFAULT_STATE };
+let latestFloorDb = null;
 
 async function ensureContext() {
   if (!sharedCtx) {
@@ -30,7 +33,6 @@ async function ensureContext() {
 
 async function hookElement(el) {
   if (processedElements.has(el)) return;
-  // Reserve the spot immediately to prevent concurrent hookElement calls on same el
   processedElements.set(el, null);
 
   try {
@@ -43,13 +45,21 @@ async function hookElement(el) {
       outputChannelCount: [2],
       parameterData: {
         threshold: currentState.threshold,
-        ratio: currentState.ratio,
-        attack: currentState.attack / 1000,
-        release: currentState.release / 1000,
-        knee: currentState.knee,
-        bypass: currentState.enabled ? 0 : 1,
+        ratio:     currentState.ratio,
+        attack:    currentState.attack / 1000,
+        release:   currentState.release / 1000,
+        knee:      currentState.knee,
+        bypass:    currentState.enabled ? 0 : 1,
+        margin:    currentState.margin,
+        adaptive:  currentState.adaptive ? 1 : 0,
       },
     });
+
+    // Receive floor updates from worklet, relay latest value to popup
+    compressorNode.port.onmessage = (e) => {
+      if (e.data.type === 'floor') latestFloorDb = e.data.floorDb;
+    };
+
     const makeupGainNode = sharedCtx.createGain();
     makeupGainNode.gain.value = currentState.enabled
       ? Math.pow(10, currentState.makeup / 20)
@@ -85,6 +95,8 @@ function applyState(state) {
     p.get('release').setTargetAtTime(state.release / 1000, t, 0.01);
     p.get('knee').setTargetAtTime(state.knee, t, 0.01);
     p.get('bypass').setTargetAtTime(state.enabled ? 0 : 1, t, 0.01);
+    p.get('margin').setTargetAtTime(state.margin, t, 0.01);
+    p.get('adaptive').setTargetAtTime(state.adaptive ? 1 : 0, t, 0.01);
 
     const makeupLin = Math.pow(10, state.makeup / 20);
     makeupGainNode.gain.setTargetAtTime(state.enabled ? makeupLin : 1.0, t, 0.05);
@@ -101,14 +113,12 @@ function notifyPopup() {
   chrome.runtime.sendMessage({ type: 'ELEMENT_COUNT', count: countHooked() }).catch(() => {});
 }
 
-// Resume AudioContext on first user interaction (browser autoplay policy)
 function resumeOnInteraction() {
   if (sharedCtx && sharedCtx.state === 'suspended') sharedCtx.resume();
 }
 document.addEventListener('click', resumeOnInteraction, { passive: true });
 document.addEventListener('keydown', resumeOnInteraction, { passive: true });
 
-// Discover media elements
 function scanAndHook() {
   document.querySelectorAll('video, audio').forEach(hookElement);
 }
@@ -124,22 +134,18 @@ const observer = new MutationObserver((mutations) => {
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
 
-// Load persisted state, then scan
-// Always scan regardless of whether background responds (MV3 service worker may be terminated)
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
   if (chrome.runtime.lastError) { /* service worker not ready yet, use defaults */ }
   if (response?.payload) currentState = response.payload;
   scanAndHook();
 });
-// Fallback: scan immediately so elements added before the response are caught
 scanAndHook();
 
-// Handle updates from popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'COMPRESSOR_UPDATE') {
     applyState(message.payload);
-    sendResponse({ ok: true, count: countHooked() });
+    sendResponse({ ok: true, count: countHooked(), floorDb: latestFloorDb });
   } else if (message.type === 'GET_COUNT') {
-    sendResponse({ count: countHooked() });
+    sendResponse({ count: countHooked(), floorDb: latestFloorDb });
   }
 });

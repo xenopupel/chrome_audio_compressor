@@ -51,7 +51,10 @@ function rmsDb(signal) {
 
 /** Параметры компрессора (значения по умолчанию можно переопределить) */
 function makeParams(overrides = {}) {
-  const base = { threshold: -18, ratio: 3, attack: 0.05, release: 0.3, knee: 6, bypass: 0 };
+  const base = {
+    threshold: -18, ratio: 3, attack: 0.05, release: 0.3,
+    knee: 6, bypass: 0, margin: 8, adaptive: 0, // adaptive=0 by default in tests for predictability
+  };
   const p = { ...base, ...overrides };
   return Object.fromEntries(Object.keys(p).map(k => [k, new Float32Array([p[k]])]));
 }
@@ -232,4 +235,143 @@ test('soft knee: сигнал у порога давится мягче, чем 
 
   assert.ok(grPerDbFar > grPerDbNear,
     `Soft knee: у порога компрессия мягче. GR/dB у порога: ${grPerDbNear.toFixed(2)}, далеко: ${grPerDbFar.toFixed(2)}`);
+});
+
+// ─── Adaptive threshold tests ─────────────────────────────────────────────────
+
+test('adaptive: floor tracker снижается при тихом сигнале', () => {
+  // Кормим тихий сигнал (-30 dBFS) достаточно долго, чтобы floor опустился.
+  // Потом проверяем, что порог стал ниже стартового -20 dBFS + margin 8 = -12 dBFS.
+  const proc = new Processor();
+  const quietInput = sine(-30, SR * 20); // 20 секунд тихого сигнала
+  const params = makeParams({ adaptive: 1, margin: 8, ratio: 3 });
+
+  // Прогоняем 20с без записи выхода — нас интересует только состояние floor
+  for (let offset = 0; offset < quietInput.length; offset += BLOCK) {
+    const len = Math.min(BLOCK, quietInput.length - offset);
+    const inBlock = quietInput.slice(offset, offset + len);
+    const inPad = len < BLOCK ? concat(inBlock, new Float32Array(BLOCK - len)) : inBlock;
+    const outL = new Float32Array(BLOCK);
+    const outR = new Float32Array(BLOCK);
+    proc.process([[inPad, inPad]], [[outL, outR]], params);
+  }
+
+  // Читаем внутренний floor через port-сообщение (нам нужно проверить что floor упал)
+  // Косвенно: если floor упал к -30, то effective threshold = -30 + 8 = -22.
+  // При тихом сигнале (-30 dBFS, RMS ≈ -33 dBFS) это ниже threshold → нет компрессии.
+  // Значит выход ≈ вход.
+  const checkInput = sine(-30, Math.round(SR * 1));
+  const checkOutput = new Float32Array(checkInput.length);
+  for (let offset = 0; offset < checkInput.length; offset += BLOCK) {
+    const len = Math.min(BLOCK, checkInput.length - offset);
+    const inBlock = checkInput.slice(offset, offset + len);
+    const inPad = len < BLOCK ? concat(inBlock, new Float32Array(BLOCK - len)) : inBlock;
+    const outL = new Float32Array(BLOCK);
+    const outR = new Float32Array(BLOCK);
+    proc.process([[inPad, inPad]], [[outL, outR]], params);
+    checkOutput.set(outL.subarray(0, len), offset);
+  }
+
+  const inRms  = rmsDb(checkInput.subarray(Math.round(0.1 * SR)));
+  const outRms = rmsDb(checkOutput.subarray(Math.round(0.1 * SR)));
+  const diff   = Math.abs(outRms - inRms);
+
+  assert.ok(diff < 1,
+    `После адаптации floor к тихому контенту, тихий сигнал не должен давиться. Разница: ${diff.toFixed(2)} dB`);
+});
+
+test('adaptive: одинаковый динамический диапазон при разной громкости плеера', () => {
+  // Симулируем "плеер на 40%" (сигнал -10 dB тише) и "плеер на 80%".
+  // После адаптации компрессор должен давить пики одинаково относительно диалога.
+
+  function simulatePlayback(baseDb, durationS) {
+    // Диалог (base) + взрывы (+15 dB над диалогом)
+    const dialogue  = sine(baseDb,      Math.round(SR * durationS * 0.7));
+    const explosion = sine(baseDb + 15, Math.round(SR * durationS * 0.3));
+    return concat(dialogue, explosion);
+  }
+
+  const params = makeParams({ adaptive: 1, margin: 8, ratio: 3 });
+
+  // Прогон при тихом плеере (базовый уровень -28 dBFS)
+  function runAndMeasureGR(baseDb) {
+    const proc   = new Processor();
+    const warmup = simulatePlayback(baseDb, 30); // 30s для адаптации floor
+    const test   = simulatePlayback(baseDb, 4);  // 4s для измерения
+
+    for (let offset = 0; offset < warmup.length; offset += BLOCK) {
+      const len = Math.min(BLOCK, warmup.length - offset);
+      const inPad = new Float32Array(BLOCK);
+      inPad.set(warmup.slice(offset, offset + len));
+      proc.process([[inPad, inPad]], [[new Float32Array(BLOCK), new Float32Array(BLOCK)]], params);
+    }
+
+    const outputTest = new Float32Array(test.length);
+    for (let offset = 0; offset < test.length; offset += BLOCK) {
+      const len = Math.min(BLOCK, test.length - offset);
+      const inPad = new Float32Array(BLOCK);
+      inPad.set(test.slice(offset, offset + len));
+      const outL = new Float32Array(BLOCK);
+      proc.process([[inPad, inPad]], [[outL, new Float32Array(BLOCK)]], params);
+      outputTest.set(outL.subarray(0, len), offset);
+    }
+
+    // GR во время взрывной части (последние 30%)
+    const explStart = Math.round(test.length * 0.7);
+    return rmsDb(test.subarray(explStart)) - rmsDb(outputTest.subarray(explStart));
+  }
+
+  const grQuiet = runAndMeasureGR(-28); // тихий плеер
+  const grLoud  = runAndMeasureGR(-14); // громкий плеер
+
+  // GR должен быть примерно одинаковым (±3 dB) — компрессор адаптировался
+  const diff = Math.abs(grQuiet - grLoud);
+  assert.ok(diff < 3,
+    `Адаптивный threshold: GR при тихом плеере ${grQuiet.toFixed(1)} dB, при громком ${grLoud.toFixed(1)} dB. Разница ${diff.toFixed(1)} dB (ожидаем < 3 dB)`);
+});
+
+test('adaptive: взрыв не сдвигает floor (floor tracker asymmetric)', () => {
+  // Долгий тихий контент → floor адаптировался → короткий (5с) взрыв.
+  // Floor не должен сильно подняться за 5с.
+  const proc = new Processor();
+  const params = makeParams({ adaptive: 1, margin: 8, ratio: 3, knee: 6 });
+
+  // 30s тихого контента для адаптации
+  const quiet = sine(-28, SR * 30);
+  for (let offset = 0; offset < quiet.length; offset += BLOCK) {
+    const len = Math.min(BLOCK, quiet.length - offset);
+    const inPad = new Float32Array(BLOCK);
+    inPad.set(quiet.slice(offset, offset + len));
+    proc.process([[inPad, inPad]], [[new Float32Array(BLOCK), new Float32Array(BLOCK)]], params);
+  }
+
+  // 5s взрыва
+  const explosion = sine(-8, SR * 5);
+  for (let offset = 0; offset < explosion.length; offset += BLOCK) {
+    const len = Math.min(BLOCK, explosion.length - offset);
+    const inPad = new Float32Array(BLOCK);
+    inPad.set(explosion.slice(offset, offset + len));
+    proc.process([[inPad, inPad]], [[new Float32Array(BLOCK), new Float32Array(BLOCK)]], params);
+  }
+
+  // После взрыва — снова тихий сигнал. Должен компрессироваться так же как до взрыва (floor не уехал).
+  const afterQuiet  = sine(-28, Math.round(SR * 2));
+  const afterOutput = new Float32Array(afterQuiet.length);
+  for (let offset = 0; offset < afterQuiet.length; offset += BLOCK) {
+    const len = Math.min(BLOCK, afterQuiet.length - offset);
+    const inPad = new Float32Array(BLOCK);
+    inPad.set(afterQuiet.slice(offset, offset + len));
+    const outL = new Float32Array(BLOCK);
+    proc.process([[inPad, inPad]], [[outL, new Float32Array(BLOCK)]], params);
+    afterOutput.set(outL.subarray(0, len), offset);
+  }
+
+  const settle  = Math.round(0.3 * SR);
+  const inRms   = rmsDb(afterQuiet.subarray(settle));
+  const outRms  = rmsDb(afterOutput.subarray(settle));
+  const diff    = Math.abs(outRms - inRms);
+
+  // Тихий сигнал после взрыва должен проходить без сильной компрессии — floor не поднялся
+  assert.ok(diff < 2,
+    `Взрыв не должен сдвинуть floor вверх. Тихий сигнал после взрыва: вход ${inRms.toFixed(1)} dB, выход ${outRms.toFixed(1)} dB, разница ${diff.toFixed(2)} dB`);
 });

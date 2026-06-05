@@ -32,7 +32,13 @@
         <div class="param-grid">
           <label for="threshold">Threshold</label>
           <input type="range" id="threshold" min="-40" max="0" value="-18" step="0.5">
-          <span id="threshold-val">-18 dB</span>
+          <span class="threshold-cell">
+            <span id="threshold-val">-18 dB</span>
+            <label class="auto-label">
+              <input type="checkbox" id="adaptive-toggle" checked>
+              <span>Auto</span>
+            </label>
+          </span>
 
           <label for="ratio">Ratio</label>
           <input type="range" id="ratio" min="1" max="20" value="3" step="0.5">
