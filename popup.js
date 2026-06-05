@@ -308,4 +308,11 @@ debugBtn.addEventListener('click', async () => {
   }
 });
 
+// React to hookElement completions that happen after the popup was already open
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.hookedCount != null) {
+    updateStatus(changes.hookedCount.newValue, state.enabled);
+  }
+});
+
 init();

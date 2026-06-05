@@ -125,7 +125,9 @@ function countHooked() {
 }
 
 function notifyPopup() {
-  chrome.runtime.sendMessage({ type: 'ELEMENT_COUNT', count: countHooked() }).catch(() => {});
+  // Write to storage so the popup reacts even if it was already open
+  // when hookElement completed (direct sendMessage wouldn't reach an open popup).
+  chrome.storage.local.set({ hookedCount: countHooked() });
 }
 
 function resumeOnInteraction() {
