@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cinema Compressor</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Cinema Compressor</h1>
+      <label class="toggle-label" title="Enable/disable compression">
+        <input type="checkbox" id="enable-toggle">
+        <span class="toggle-switch"></span>
+      </label>
+    </header>
+
+    <section class="controls" id="controls-section">
+      <div class="control-row">
+        <label for="intensity-slider">Intensity</label>
+        <span id="intensity-label">Medium</span>
+      </div>
+      <input type="range" id="intensity-slider" min="0" max="100" value="50" step="1">
+      <div class="range-labels">
+        <span>Soft</span>
+        <span>Aggressive</span>
+      </div>
+
+      <details id="advanced">
+        <summary>Advanced</summary>
+        <div class="param-grid">
+          <label for="threshold">Threshold</label>
+          <input type="range" id="threshold" min="-40" max="0" value="-18" step="0.5">
+          <span id="threshold-val">-18 dB</span>
+
+          <label for="ratio">Ratio</label>
+          <input type="range" id="ratio" min="1" max="20" value="3" step="0.5">
+          <span id="ratio-val">3 : 1</span>
+
+          <label for="attack">Attack</label>
+          <input type="range" id="attack" min="1" max="200" value="50" step="1">
+          <span id="attack-val">50 ms</span>
+
+          <label for="release">Release</label>
+          <input type="range" id="release" min="50" max="2000" value="300" step="10">
+          <span id="release-val">300 ms</span>
+
+          <label for="makeup">Makeup</label>
+          <input type="range" id="makeup" min="0" max="24" value="4" step="0.5">
+          <span id="makeup-val">+4 dB</span>
+        </div>
+      </details>
+    </section>
+
+    <div class="status" id="status-bar">No media detected</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
