@@ -183,3 +183,54 @@ details[open] summary::before { transform: rotate(90deg); }
 .status.active { background: #1a2e1a; color: #4ade80; }
 .status.off    { background: #242424; color: #555; }
 .status.idle   { background: #242424; color: #888; }
+
+/* Debug */
+.debug-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.debug-btn {
+  background: none;
+  border: 1px solid #333;
+  color: #555;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.debug-btn:hover { border-color: #555; color: #888; }
+
+.debug-panel {
+  font-size: 11px;
+  font-family: monospace;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debug-panel.hidden { display: none; }
+
+.dbg-frame {
+  color: #555;
+  font-size: 10px;
+  margin-top: 6px;
+  border-top: 1px solid #222;
+  padding-top: 4px;
+}
+.dbg-frame:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+
+.dbg-entry { display: flex; gap: 6px; align-items: baseline; }
+.dbg-icon  { flex-shrink: 0; width: 14px; text-align: center; }
+.dbg-msg   { color: #999; word-break: break-all; }
+
+.dbg-ok   .dbg-icon { color: #4ade80; }
+.dbg-cors .dbg-icon { color: #f97316; }
+.dbg-err  .dbg-icon { color: #f87171; }
+.dbg-found .dbg-icon { color: #60a5fa; }

@@ -247,4 +247,65 @@ async function init() {
   }
 }
 
+// ─── Debug panel ─────────────────────────────────────────────────────────────
+
+const debugBtn   = document.getElementById('debug-btn');
+const debugPanel = document.getElementById('debug-panel');
+
+const ICONS = { ok: '✓', cors: '⚠', err: '✗', found: '●' };
+
+function renderDebug(entries) {
+  if (!entries.length) {
+    debugPanel.innerHTML = '<span style="color:#555">Нет событий. Перезагрузи страницу и попробуй снова.</span>';
+    return;
+  }
+
+  // Group by frame
+  const frames = {};
+  for (const e of entries) {
+    const key = `${e.isIframe ? 'iframe' : 'main'}: ${e.frameUrl}`;
+    if (!frames[key]) frames[key] = [];
+    frames[key].push(e);
+  }
+
+  debugPanel.innerHTML = Object.entries(frames).map(([frameLabel, evts]) => `
+    <div class="dbg-frame">${frameLabel}</div>
+    ${evts.map(e => `
+      <div class="dbg-entry dbg-${e.type}">
+        <span class="dbg-icon">${ICONS[e.type] ?? '?'}</span>
+        <span class="dbg-msg">${e.msg}</span>
+      </div>`).join('')}
+  `).join('');
+}
+
+debugBtn.addEventListener('click', async () => {
+  const isOpen = !debugPanel.classList.contains('hidden');
+  if (isOpen) {
+    debugPanel.classList.add('hidden');
+    debugBtn.textContent = 'Debug';
+    return;
+  }
+
+  debugPanel.classList.remove('hidden');
+  debugBtn.textContent = 'Закрыть';
+  debugPanel.innerHTML = '<span style="color:#555">Собираю...</span>';
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    renderDebug([]);
+    return;
+  }
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: () => window.__cinemaDebug ?? [],
+    });
+    const all = results.flatMap(r => r.result ?? []);
+    renderDebug(all);
+  } catch (e) {
+    debugPanel.innerHTML = `<span style="color:#f87171">Ошибка: ${e.message}</span>`;
+  }
+});
+
 init();

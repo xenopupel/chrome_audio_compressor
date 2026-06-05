@@ -2,6 +2,15 @@ let sharedCtx = null;
 let workletLoaded = false;
 const processedElements = new Map();
 
+// Debug log — collected by popup via chrome.scripting.executeScript
+window.__cinemaDebug = [];
+function dbg(type, msg) {
+  const isIframe = window !== top;
+  const frameUrl = location.href.replace(/^https?:\/\//, '').slice(0, 60);
+  window.__cinemaDebug.unshift({ type, msg, isIframe, frameUrl });
+  if (window.__cinemaDebug.length > 30) window.__cinemaDebug.pop();
+}
+
 const DEFAULT_STATE = {
   enabled: false,
   threshold: -18,
@@ -34,6 +43,9 @@ async function ensureContext() {
 async function hookElement(el) {
   if (processedElements.has(el)) return;
   processedElements.set(el, null);
+
+  const elDesc = `${el.tagName.toLowerCase()} src="${(el.src || el.currentSrc || '').slice(0, 80)}"`;
+  dbg('found', elDesc);
 
   try {
     await ensureContext();
@@ -70,12 +82,15 @@ async function hookElement(el) {
     makeupGainNode.connect(sharedCtx.destination);
 
     processedElements.set(el, { sourceNode, compressorNode, makeupGainNode });
+    dbg('ok', `hooked ✓`);
     notifyPopup();
   } catch (err) {
     processedElements.delete(el);
     if (err.name === 'SecurityError') {
-      console.debug('[CinemaCompressor] Skipped cross-origin element:', el.src);
+      dbg('cors', `SecurityError — CDN без CORS-заголовков. Нужен нативный хелпер.`);
+      console.debug('[CinemaCompressor] SecurityError:', el.src);
     } else {
+      dbg('err', `${err.name}: ${err.message}`);
       console.warn('[CinemaCompressor] hookElement error:', err);
     }
   }
