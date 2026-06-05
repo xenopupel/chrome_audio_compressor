@@ -44,14 +44,14 @@ async function hookElement(el) {
       numberOfOutputs: 1,
       outputChannelCount: [2],
       parameterData: {
-        threshold: currentState.threshold,
-        ratio:     currentState.ratio,
-        attack:    currentState.attack / 1000,
-        release:   currentState.release / 1000,
-        knee:      currentState.knee,
-        bypass:    currentState.enabled ? 0 : 1,
-        margin:    currentState.margin,
-        adaptive:  currentState.adaptive ? 1 : 0,
+        threshold: currentState.threshold ?? -18,
+        ratio:     currentState.ratio     ?? 3,
+        attack:    (currentState.attack   ?? 50)  / 1000,
+        release:   (currentState.release  ?? 300) / 1000,
+        knee:      currentState.knee      ?? 6,
+        bypass:    currentState.enabled   ? 0 : 1,
+        margin:    currentState.margin    ?? 8,
+        adaptive:  currentState.adaptive  ? 1 : 0,
       },
     });
 
